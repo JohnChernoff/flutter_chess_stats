@@ -39,7 +39,6 @@ class _MyHomePageState extends State<MyHomePage>
   // ── State ──────────────────────────────────────────────────────────────────
   bool initialized = false;   // PGN parsed
   bool cacheReady = false;    // full texture cache built for current piece
-  bool crossFade = false;
   int maxPly = 127;
   Piece piece = Piece.all;
   late ChessStat stats;
@@ -49,16 +48,11 @@ class _MyHomePageState extends State<MyHomePage>
   final Map<Piece, Map<int, GridTexture>> _texCache = {};
 
   // Two textures currently being cross-faded.
-  GridTexture? texA;
-  GridTexture? texB;
-  int _displayPly = 0;
-  int _plyB = 0;
+  GridTexture? _tex;
+  int _ply = 0;
 
   // ── Animation ──────────────────────────────────────────────────────────────
-  late final AnimationController _ctrl;
-  late final Animation<double> _tween;
   bool _playing = false;
-
   // Milliseconds per ply step during auto-play.
   static const int _stepMs = 160;
 
@@ -67,29 +61,10 @@ class _MyHomePageState extends State<MyHomePage>
   void initState() {
     super.initState();
 
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: _stepMs),
-    );
-    _tween = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
-
-    _ctrl.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        _snapToB();
-        if (_playing) _advancePlay();
-      }
-    });
-
     stats = ChessStat();
     stats
         .calcPieces("pgn/lichess_db_standard_rated_2013-01.pgn")
         .then((_) => _onStatsReady());
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
@@ -104,10 +79,8 @@ class _MyHomePageState extends State<MyHomePage>
     final t = _texCache[piece]![0]!;
     setState(() {
       cacheReady = true;
-      texA = t;
-      texB = t;
-      _plyB = 0;
-      _displayPly = 0;
+      _tex = t;
+      _ply = 0;
     });
   }
 
@@ -194,85 +167,58 @@ class _MyHomePageState extends State<MyHomePage>
     }
   }
 
+  void _stop() {
+    setState(() => _playing = false);
+  }
+
   // ── Navigation — all synchronous once cache is warm ────────────────────────
 
   /// Snap to [ply] with no animation.
   void _jumpTo(int ply, {animating = false}) {
-    print("Jumping to: $ply");
-    if (!animating) _ctrl.stop();
+    if (!animating) _stop();
     final tex = _texCache[piece]?[ply];
     if (tex == null) return;
-    print("Setting state at: $ply");
     setState(() {
-      texA = tex;
-      texB = tex;
-      _plyB = ply;
-      _displayPly = ply;
-      if (!animating) _ctrl.value = 0;
+      _tex = tex;
+      _ply = ply;
     });
   }
 
-  /// Start a cross-fade from the current frame to [targetPly].
-  void _animateTo(int targetPly) {
-    if (targetPly == _plyB) return;
-    final tex = _texCache[piece]?[targetPly];
-    if (tex == null) return;
-    setState(() {
-      texB = tex;
-      _plyB = targetPly;
-      _displayPly = targetPly;
-    });
-    _ctrl.forward(from: 0);
-  }
-
-  void _snapToB() {
-    setState(() {
-      texA = texB;
-      _ctrl.value = 0;
-    });
-  }
-
-  void _advancePlay() {
-    final next = _plyB + 2;
+  void _nextStep() {
+    if (!_playing) return;
+    final next = _ply + 2;
     if (next > maxPly) {
       _jumpTo(0);
-      if (_playing) _advancePlay();
+      _nextStep();
     } else {
-      if (crossFade) {
-        _animateTo(next);
-      } else {
-        _jumpTo(next, animating: true);
-        Future.delayed(Duration(milliseconds: 60)).then((v) => _ctrl.forward(from: 0));
-      }
+      _jumpTo(next, animating: true);
+      Future.delayed(Duration(milliseconds: _stepMs)).then((v) => _nextStep());
     }
   }
 
   // ── Transport controls ─────────────────────────────────────────────────────
   void _togglePlay() {
     if (_playing) {
-      setState(() => _playing = false);
-      _ctrl.stop();
+      _stop();
     } else {
-      setState(() => _playing = true);
-      _advancePlay();
+      _playing = true;
+      _nextStep();
     }
   }
 
   void _stepBack() {
-    _ctrl.stop();
-    setState(() => _playing = false);
-    _animateTo((_plyB - 2).clamp(0, maxPly));
+    _stop();
+    _jumpTo((_ply - 2).clamp(0, maxPly));
   }
 
   void _stepForward() {
-    _ctrl.stop();
-    setState(() => _playing = false);
-    _animateTo((_plyB + 2).clamp(0, maxPly));
+    _stop();
+    _jumpTo((_ply + 2).clamp(0, maxPly));
   }
 
   /// Switch piece: warm its cache if needed (shows a spinner), then jump.
   void _setPiece(Piece p) async {
-    _ctrl.stop();
+    _stop();
     setState(() {
       _playing = false;
       piece = p;
@@ -281,7 +227,7 @@ class _MyHomePageState extends State<MyHomePage>
     await _warmCache(p);
     if (!mounted) return;
     setState(() => cacheReady = true);
-    _jumpTo(_plyB);
+    _jumpTo(_ply);
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -337,22 +283,14 @@ class _MyHomePageState extends State<MyHomePage>
           const SizedBox(height: 14),
 
           // ── Heatmap ───────────────────────────────────────────────────────
-          AnimatedBuilder(
-            animation: _tween,
-            builder: (context, _) => _CrossFadeHeatmap(
-              texA: texA?.image,
-              texB: texB?.image,
-              t: _tween.value,
-              size: 280,
-            ),
-          ),
+          RawImage(image: _tex?.image),
           const SizedBox(height: 10),
 
           // ── Ply label ─────────────────────────────────────────────────────
           Text(
             'Piece: ${piece.name}   '
-                'Ply $_displayPly / $maxPly  '
-                '(move ${(_displayPly / 2).ceil()})',
+                'Ply $_ply / $maxPly  '
+                '(move ${(_ply / 2).ceil()})',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 4),
@@ -362,9 +300,9 @@ class _MyHomePageState extends State<MyHomePage>
             min: 0,
             max: maxPly.toDouble(),
             divisions: maxPly ~/ 2,
-            value: _displayPly.toDouble().clamp(0, maxPly.toDouble()),
+            value: _ply.toDouble().clamp(0, maxPly.toDouble()),
             onChangeStart: (_) {
-              _ctrl.stop();
+              _stop();
               setState(() => _playing = false);
             },
             onChanged: (v) {
@@ -420,72 +358,4 @@ class _MyHomePageState extends State<MyHomePage>
       ),
     );
   }
-}
-
-// ── Cross-fade heatmap ────────────────────────────────────────────────────────
-
-/// Paints [texA] at opacity (1−t) then [texB] at opacity t, giving a smooth
-/// pixel-level cross-fade between two heatmap frames. No widget rebuilds or
-/// new texture allocations happen during the tween — only paint() is called.
-class _CrossFadeHeatmap extends StatelessWidget {
-  const _CrossFadeHeatmap({
-    required this.texA,
-    required this.texB,
-    required this.t,
-    required this.size,
-  });
-
-  final ui.Image? texA;
-  final ui.Image? texB;
-  final double t;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _HeatmapCrossFadePainter(texA: texA, texB: texB, t: t),
-      ),
-    );
-  }
-}
-
-class _HeatmapCrossFadePainter extends CustomPainter {
-  _HeatmapCrossFadePainter({
-    required this.texA,
-    required this.texB,
-    required this.t,
-  });
-
-  final ui.Image? texA;
-  final ui.Image? texB;
-  final double t;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final dst = Rect.fromLTWH(0, 0, size.width, size.height);
-
-    void drawTex(ui.Image img, double opacity) {
-      if (opacity <= 0) return;
-      final src =
-      Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
-      canvas.drawImageRect(
-        img,
-        src,
-        dst,
-        Paint()
-          ..filterQuality = FilterQuality.low
-          ..color = Color.fromARGB((opacity * 255).round(), 255, 255, 255),
-      );
-    }
-
-    if (texA != null) drawTex(texA!, 1.0 - t);
-    if (texB != null) drawTex(texB!, t);
-  }
-
-  @override
-  bool shouldRepaint(_HeatmapCrossFadePainter old) =>
-      old.t != t || old.texA != texA || old.texB != texB;
 }
