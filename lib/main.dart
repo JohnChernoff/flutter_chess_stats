@@ -2,8 +2,12 @@ import 'dart:math';
 import 'package:chess_stats/stats.dart';
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'grid_tex.dart';
+
+enum ViewMode {
+  rawCounts,   // original Map-based behavior
+  normalized,  // current z-score / max-normalized version
+}
 
 void main() {
   runApp(const MyApp());
@@ -37,6 +41,7 @@ class _MyHomePageState extends State<MyHomePage>
     with SingleTickerProviderStateMixin {
 
   // ── State ──────────────────────────────────────────────────────────────────
+  ViewMode mode = ViewMode.normalized;
   bool initialized = false;   // PGN parsed
   bool cacheReady = false;    // full texture cache built for current piece
   int maxPly = 127;
@@ -86,40 +91,6 @@ class _MyHomePageState extends State<MyHomePage>
 
   // ── Texture building ───────────────────────────────────────────────────────
 
-  Float64List _buildGrid(Map<String, int> map) {
-    final raw = Float64List(64);
-    for (int rank = 1; rank <= 8; rank++) {
-      for (int file = 0; file < 8; file++) {
-        final sq = '${String.fromCharCode(97 + file)}$rank';
-        final idx = (8 - rank) * 8 + file;
-        raw[idx] = (map[sq] ?? 0).toDouble();
-      }
-    }
-
-    final nonZero = raw.where((v) => v > 0).toList();
-    if (nonZero.isEmpty) return raw;
-
-    final mean = nonZero.reduce((a, b) => a + b) / nonZero.length;
-    final variance = nonZero
-        .map((v) => (v - mean) * (v - mean))
-        .reduce((a, b) => a + b) /
-        nonZero.length;
-    final std = sqrt(variance);
-
-    const sigmaRange = 2.5;
-    final grid = Float64List(64);
-    for (int i = 0; i < 64; i++) {
-      if (raw[i] == 0) {
-        grid[i] = 0.0;
-      } else {
-        final z = std > 0 ? (raw[i] - mean) / std : 0.0;
-        grid[i] = ((z / sigmaRange) + 1.0) / 2.0;
-        grid[i] = grid[i].clamp(0.05, 1.0);
-      }
-    }
-    return grid;
-  }
-
   Color _heatColor(double v) {
     v = v.clamp(0.0, 1.0);
     const stops = [
@@ -141,15 +112,66 @@ class _MyHomePageState extends State<MyHomePage>
   }
 
   Future<GridTexture> _buildTexture(Piece p, int ply) {
-    final map = stats.pieceCoordMapByPly[ply]?[p] ?? {};
-    final grid = _buildGrid(map);
+    final values = switch (mode) {
+      ViewMode.rawCounts => _buildRawTexture(p, ply),
+      ViewMode.normalized => _buildNormalizedTexture(p, ply)
+    };
     return GridTexture.build(
-      gridW: 8,
-      gridH: 8,
-      values: grid,
-      pxPerCell: 32,
-      colorFn: _heatColor,
+        gridW: 8,
+        gridH: 8,
+        values: values,
+        pxPerCell: 32,
+        colorFn: _heatColor,
+        flip: true
     );
+  }
+
+  Float64List _buildNormalizedTexture(Piece p, int ply) {
+    final pieceIndex = p.id;
+    final counts = stats.counts![ply][pieceIndex];
+
+    final values = Float64List(64);
+
+    double max = 1;
+    for (final v in counts) {
+      if (v > max) max = v.toDouble();
+    }
+
+    for (int i = 0; i < 64; i++) {
+      values[i] = counts[i] / max;
+    }
+
+    return values;
+  }
+
+  Float64List _buildRawTexture(Piece p, int ply) {
+    final pieceIndex = p.id;
+    final counts = stats.counts![ply][pieceIndex];
+
+    final values = Float64List(64);
+
+    double max = 1;
+    for (final v in counts) {
+      if (v > max) max = v.toDouble();
+    }
+
+    for (int i = 0; i < 64; i++) {
+      values[i] = counts[i].toDouble();
+    }
+
+    return values;
+  }
+
+  Future<void> _rebuildCurrentTexture() async {
+    if (!cacheReady) return;
+
+    final tex = await _buildTexture(piece, _ply);
+
+    if (!mounted) return;
+
+    setState(() {
+      _tex = tex;
+    });
   }
 
   /// Builds and caches textures for all plies of [p] if not already cached.
@@ -268,7 +290,6 @@ class _MyHomePageState extends State<MyHomePage>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-
           // ── Piece selector ────────────────────────────────────────────────
           Wrap(
             spacing: 4,
@@ -359,3 +380,51 @@ class _MyHomePageState extends State<MyHomePage>
     );
   }
 }
+
+/*
+  Future<GridTexture> _buildTextureDC(Piece p, int ply) {
+    final pieceIndex = p.id;
+    final counts = stats.counts![ply][pieceIndex];
+
+    final values = Float64List(64);
+
+    double max = 1;
+    for (final v in counts) {
+      if (v > max) max = v.toDouble();
+    }
+
+    for (int i = 0; i < 64; i++) {
+      values[i] = counts[i] / max;
+      //values[i] = log(1 + counts[i]);
+    }
+
+    return GridTexture.build(
+      gridW: 8,
+      gridH: 8,
+      values: values,
+      pxPerCell: 32,
+      colorFn: _heatColor,
+      flip: true
+    );
+  }
+
+            SegmentedButton<ViewMode>(
+            segments: const [
+              ButtonSegment(
+                value: ViewMode.rawCounts,
+                label: Text("Raw"),
+              ),
+              ButtonSegment(
+                value: ViewMode.normalized,
+                label: Text("Normalized"),
+              ),
+            ],
+            selected: {mode},
+            onSelectionChanged: (s) {
+              setState(() => mode = s.first);
+              _rebuildCurrentTexture();
+            },
+          ),
+
+          Divider(height: 8,),
+ */

@@ -26,6 +26,7 @@ class GridTexture {
     int pxPerCell = 8,
     Color Function(double value)? colorFn,
     bool smooth = true,
+    bool flip = false,
   }) async {
     final mw = gridW * pxPerCell;
     final mh = gridH * pxPerCell;
@@ -38,7 +39,9 @@ class GridTexture {
         final i = py * mw + px;
 
         final sx = (px + 0.5) / pxPerCell;
-        final sy = (py + 0.5) / pxPerCell;
+        final sy = flip
+          ? gridH - 1 - ((py + 0.5) / pxPerCell)
+          : (py + 0.5) / pxPerCell;
 
         final value = smooth
             ? sampleBilinear(sx, sy, gridW, gridH, values)
