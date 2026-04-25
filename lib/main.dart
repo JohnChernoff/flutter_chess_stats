@@ -42,6 +42,8 @@ class _MyHomePageState extends State<MyHomePage>
 
   // ── State ──────────────────────────────────────────────────────────────────
   ViewMode mode = ViewMode.normalized;
+  TextStyle txtStyle1 = TextStyle(color: Colors.white);
+  TextStyle txtStyle2 = TextStyle(color: Colors.black);
   bool initialized = false;   // PGN parsed
   bool cacheReady = false;    // full texture cache built for current piece
   int maxPly = 127;
@@ -260,36 +262,39 @@ class _MyHomePageState extends State<MyHomePage>
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
       ),
-      body: Center(
+      body: ColoredBox(color: Colors.black, child: Center(
         child: !initialized
-            ? const Column(
+            ? Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 12),
-            Text('Loading PGN data…'),
+            Text('Loading PGN data…', style: txtStyle1),
           ],
         )
             : !cacheReady
-            ? const Column(
+            ? Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 12),
-            Text('Building texture cache…'),
+            Text('Building texture cache…', style: txtStyle1),
           ],
         )
             : _buildBody(),
       ),
-    );
+    ));
   }
 
   Widget _buildBody() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: Column(
+      child: ColoredBox(color: Colors.cyan, child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          Text("This app visualizes the probabilities of a given piece moving to a given square on a given move in chess.",style: txtStyle2),
+          Text("Blue: rare, Green: common, Red: likely",style: txtStyle2),
+          SizedBox(height: 24),
           // ── Piece selector ────────────────────────────────────────────────
           Wrap(
             spacing: 4,
@@ -377,54 +382,7 @@ class _MyHomePageState extends State<MyHomePage>
           ),
         ],
       ),
-    );
+    ));
   }
 }
 
-/*
-  Future<GridTexture> _buildTextureDC(Piece p, int ply) {
-    final pieceIndex = p.id;
-    final counts = stats.counts![ply][pieceIndex];
-
-    final values = Float64List(64);
-
-    double max = 1;
-    for (final v in counts) {
-      if (v > max) max = v.toDouble();
-    }
-
-    for (int i = 0; i < 64; i++) {
-      values[i] = counts[i] / max;
-      //values[i] = log(1 + counts[i]);
-    }
-
-    return GridTexture.build(
-      gridW: 8,
-      gridH: 8,
-      values: values,
-      pxPerCell: 32,
-      colorFn: _heatColor,
-      flip: true
-    );
-  }
-
-            SegmentedButton<ViewMode>(
-            segments: const [
-              ButtonSegment(
-                value: ViewMode.rawCounts,
-                label: Text("Raw"),
-              ),
-              ButtonSegment(
-                value: ViewMode.normalized,
-                label: Text("Normalized"),
-              ),
-            ],
-            selected: {mode},
-            onSelectionChanged: (s) {
-              setState(() => mode = s.first);
-              _rebuildCurrentTexture();
-            },
-          ),
-
-          Divider(height: 8,),
- */
